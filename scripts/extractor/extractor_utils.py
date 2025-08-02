@@ -1,5 +1,12 @@
 import os 
 import boto3
+import sys
+
+logs_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'logs'))
+if logs_path not in sys.path:
+    sys.path.append(logs_path)
+
+from logger import get_logger
 
 from collections import deque
 
@@ -12,6 +19,7 @@ BUCKET_NAME = "m5-walmart-project"
 PREFIX = 'raw/'
 FOLDER_PATH = 'scripts/bronze/downloaded_data'
 BATCH_SIZE = 5 
+logger = get_logger(__name__)
 
 # ===================================================================================
 # Functions
@@ -32,5 +40,6 @@ def batch_download(bucket_name=BUCKET_NAME, prefix=PREFIX, folder_path=FOLDER_PA
         basename = os.path.basename(curr_key)
         local_path = os.path.join(folder_path, basename)
         s3.download_file(bucket_name, curr_key, local_path)
+        logger.info(f"Downloaded {basename} to {folder_path}")
         batched += 1
     
