@@ -42,19 +42,25 @@ def convert_to_pd_df(filepath):
     return pd.read_csv(filepath)
 
 
-def convert_to_csv(df, filepath, name):
+def convert_to_csv(df, filepath, name, logger):
     """
     Converts a dataframe to a CSV file
 
     Input: 
         - df: Dataframe to be converted
         - filepath: Directory where the CSV should be saved
-        - name: Name (without extensions) to use for the file 
+        - name: Name (without extensions) to use for the file
+        - logger: Logger object for recording events
     Output:
         - The full path of the saved CSV file
     """    
+    os.makedirs(filepath, exist_ok=True)
     full_path = os.path.join(filepath, f"bronze_{name}.csv")
-    df.to_csv(full_path, index=False)
+    if not os.path.exists(full_path):
+        df.to_csv(full_path, index=False)
+    else:
+        logger.warning(f"{os.path.basename(full_path)} already in {os.path.basename(filepath)}")
+    
     return full_path
 
 
