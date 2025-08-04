@@ -2,6 +2,8 @@ import os
 import boto3
 import sys
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 logs_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'logs'))
 if logs_path not in sys.path:
     sys.path.append(logs_path)
@@ -18,7 +20,7 @@ s3 = boto3.client("s3")
 BUCKET_NAME = "m5-walmart-project"
 PREFIX = 'raw/'
 FOLDER_PATH = 'scripts/bronze/downloaded_data'
-BATCH_SIZE = 5 
+BATCH_SIZE = 20 
 logger = get_logger(__name__)
 
 # ===================================================================================
@@ -29,17 +31,79 @@ def viewer(bucket_name=BUCKET_NAME):
     test =  s3.list_objects_v2(Bucket=bucket_name, Prefix=PREFIX)
     print(test['Contents'][0]['Key'])
 
-def batch_download(bucket_name=BUCKET_NAME, prefix=PREFIX, folder_path=FOLDER_PATH, batch_size=BATCH_SIZE):
+
+
+def get_files_from_s3(bucket_name, prefix):
     contents = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)['Contents']
-    q = deque(contents)
+    return contents
 
-    batched = 0
 
-    while batched < batch_size:
-        curr_key = q.popleft()['Key']
-        basename = os.path.basename(curr_key)
+
+# def batch_download(bucket_name=BUCKET_NAME, prefix=PREFIX, folder_path=FOLDER_PATH, batch_size=BATCH_SIZE):
+#     contents = get_files_from_s3(BUCKET_NAME, PREFIX)
+#     q = deque(contents)
+
+#     batched = 0
+
+#     while batched < batch_size:
+#         curr_key = q.popleft()['Key']
+#         basename = os.path.basename(curr_key)
+#         local_path = os.path.join(folder_path, basename)
+#         s3.download_file(bucket_name, curr_key, local_path)
+#         logger.info(f"Downloaded {basename} to {folder_path}")
+#         batched += 1
+
+
+
+def threaded_download(file_keys, max_threads=10):
+    with ThreadPoolExecutor(max_threads) as executor:
+        futures = [executor.submit(batch_download, key) for key in file_keys]
+        for future in as_completed(futures):
+            future.result()
+
+
+
+def is_valid_key(bucket_name, key):
+    try:
+        s3.head_object(Bucket=bucket_name, Key=key)
+        return True
+    except s3.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            return False
+        else:
+            raise
+
+
+
+def download_single_file(key, folder_path, bucket_name, verbose=True):
+    try:
+        if not is_valid_key(key):
+            logger.warning(f"Key not found in bucket: {key}")
+            return 
+
+        basename = os.path.basename(key)
         local_path = os.path.join(folder_path, basename)
-        s3.download_file(bucket_name, curr_key, local_path)
+        s3.download_file(bucket_name, key, local_path)
+
+        if verbose:
+            logger.info(f"Downloaded {basename} to {folder_path}")
+    except Exception as e:
+        logger.error(f"Failed to download {basename} to {folder_path}: {e}")
+
+
+
+def batch_loop(batch_size, q, folder_path=FOLDER_PATH, bucket_name=BUCKET_NAME):
+    file_dict = {}
+    for _ in range(min(batch_size, len(q))):
+        key = q.popleft()['Key']
+        basename = os.path.basename(key)
+        local_path = os.path.join(folder_path, basename)
+        s3.download_file(bucket_name, key, local_path)
         logger.info(f"Downloaded {basename} to {folder_path}")
-        batched += 1
+        file_dict[basename] = local_path
     
+    # print(file_dict)
+    return file_dict
+
+
+

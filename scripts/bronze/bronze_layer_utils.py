@@ -1,12 +1,46 @@
 import pandas as pd 
 import os
 import sys
+import time
+
+scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(scripts_path)
+
+base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.append(base_path)
+
+logs_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'logs'))
+if logs_path not in sys.path:
+    sys.path.append(logs_path)
+
+from extractor.extractor_utils import (
+    get_files_from_s3,
+    batch_loop,
+
+    BUCKET_NAME,
+    PREFIX,
+    BATCH_SIZE,
+)
+
+from s3_utils import (
+    upload_to_s3, 
+    clear_s3_prefix
+)
+
+from logs.logger import get_logger
+
+from collections import deque
 
 # ===================================================================================
 # Constants
 # ===================================================================================
 
-FOLDER_PATH = "downloaded_data"
+
+# logger = get_logger()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) 
+DOWNLOAD_FOLDER_PATH = os.path.join(BASE_DIR, "downloaded_data")
+UPLOAD_DATA_FOLDER = os.path.join(BASE_DIR, 'data_to_upload')
+BRONZE_PREFIX = 'bronze_layer'
 
 # ===================================================================================
 # Functions
@@ -29,6 +63,8 @@ def access_all_files(folder_path):
 
     return files
 
+
+
 def convert_to_pd_df(filepath):
     """
     Converts a file to a pandas df
@@ -40,6 +76,7 @@ def convert_to_pd_df(filepath):
     """
     
     return pd.read_csv(filepath)
+
 
 
 def convert_to_csv(df, filepath, name, logger):
@@ -55,7 +92,7 @@ def convert_to_csv(df, filepath, name, logger):
         - The full path of the saved CSV file
     """    
     os.makedirs(filepath, exist_ok=True)
-    full_path = os.path.join(filepath, f"bronze_{name}.csv")
+    full_path = os.path.join(filepath, f"bronze_{name}")
     if not os.path.exists(full_path):
         df.to_csv(full_path, index=False)
     else:
@@ -64,7 +101,8 @@ def convert_to_csv(df, filepath, name, logger):
     return full_path
 
 
-def delete_file(filepath):
+
+def delete_file(filepath, logger):
     """
     Deletes a file in the operating system
     Input:
@@ -74,10 +112,48 @@ def delete_file(filepath):
     """
     if os.path.isfile(filepath):
         os.remove(filepath)
-        print(f"Deleted: {filepath}")
+        logger.info(f"Deleted: {filepath}")
     else:
-        print(f"File not found: {filepath}")
+        logger.warning(f"Unable to delete {os.path.basename(filepath)}, file not found: {filepath}")
 
+
+
+def batch_download(logger, bucket_name=BUCKET_NAME, prefix=PREFIX, batch_size=BATCH_SIZE, upload_data_folder=UPLOAD_DATA_FOLDER, download_folder_path=DOWNLOAD_FOLDER_PATH, s3_bronze_prefix=BRONZE_PREFIX):
+    contents = get_files_from_s3(bucket_name, prefix)
+    q = deque(contents)
+    total_file_count = len(contents)
+    batch_num = 1
+
+    while q:
+        logger.info(f"Starting batch {batch_num} - Remaining files: {len(q)}")
+        file_dict = batch_loop(batch_size, q)
+        downloaded = total_file_count - len(q)
+
+        dfs = {
+            key: convert_to_pd_df(value)
+            for key, value in file_dict.items()
+        }
+
+        for filename, df in dfs.items():
+            full_path = convert_to_csv(df, upload_data_folder, filename, logger)
+
+        for file in os.listdir(UPLOAD_DATA_FOLDER):
+            full_path_upload = os.path.join(upload_data_folder, file)
+            if file.startswith("bronze_"):
+                original_file = file.replace("bronze_", "", 1)
+            full_path_download = os.path.join(download_folder_path, original_file)
+            s3_key = f"{s3_bronze_prefix}/{file}"
+            upload_to_s3(full_path_upload, bucket_name, s3_key, logger)
+            delete_file(full_path_upload, logger)
+            delete_file(full_path_download, logger)
+            
+        
+
+
+        logger.info(f"Batched {downloaded}/{total_file_count} files")
+        batch_num += 1
+
+        time.sleep(20)
 
 
 
