@@ -38,26 +38,5 @@ logger = get_logger("bronze_main")
 # __main__
 # ===================================================================================
 
-# file_dict = access_all_files(DOWNLOADED_DATA_FOLDER)
-
-
-
-# dfs = {
-#     key: convert_to_pd_df(value)
-#     for key, value in file_dict.items()
-# }
-
-# for filename, df in dfs.items():
-#     convert_to_csv(df, UPLOAD_DATA_FOLDER, filename, logger)
-#     print(filename)
-
-# for file in os.listdir(UPLOAD_DATA_FOLDER):
-#     full_path = os.path.join(UPLOAD_DATA_FOLDER, file)
-#     s3_key = f"{s3_bronze_prefix}/{file}"
-#     upload_to_s3(full_path, BUCKET, s3_key, logger)
-
-
-#### Figure out how to use parallelism so I don't need to go through the 
-#### files one step at a time and can instead parallelism them.
 
 batch_download(logger)

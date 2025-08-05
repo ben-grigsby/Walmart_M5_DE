@@ -26,7 +26,7 @@ def upload_to_s3(local_path, bucket, s3_key, logger):
     logger.info(f"Uploaded {local_path} to s3://{bucket}/{s3_key}")
 
 
-def clear_s3_prefix(bucket, prefix):
+def clear_s3_prefix(bucket, prefix, logger):
     """
     Deletes all files with a specific prefix from the bucket on s3
     """

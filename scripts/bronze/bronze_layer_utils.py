@@ -16,10 +16,6 @@ if logs_path not in sys.path:
 from extractor.extractor_utils import (
     get_files_from_s3,
     batch_loop,
-
-    BUCKET_NAME,
-    PREFIX,
-    BATCH_SIZE,
 )
 
 from s3_utils import (
@@ -79,7 +75,7 @@ def convert_to_pd_df(filepath):
 
 
 
-def convert_to_csv(df, filepath, name, logger):
+def convert_to_csv(df, filepath, name, logger, prefix):
     """
     Converts a dataframe to a CSV file
 
@@ -92,13 +88,21 @@ def convert_to_csv(df, filepath, name, logger):
         - The full path of the saved CSV file
     """    
     os.makedirs(filepath, exist_ok=True)
-    full_path = os.path.join(filepath, f"bronze_{name}")
+    full_path = os.path.join(filepath, f"{prefix}_{name}")
     if not os.path.exists(full_path):
         df.to_csv(full_path, index=False)
     else:
         logger.warning(f"{os.path.basename(full_path)} already in {os.path.basename(filepath)}")
     
     return full_path
+
+def convert_dict_dfs(file_dict):
+    dfs = {
+        key: convert_to_pd_df(value)
+        for key, value in file_dict.items()
+    }
+
+    return dfs
 
 
 
@@ -118,49 +122,48 @@ def delete_file(filepath, logger):
 
 
 
-def batch_download(logger, bucket_name=BUCKET_NAME, prefix=PREFIX, batch_size=BATCH_SIZE, upload_data_folder=UPLOAD_DATA_FOLDER, download_folder_path=DOWNLOAD_FOLDER_PATH, s3_bronze_prefix=BRONZE_PREFIX):
-    contents = get_files_from_s3(bucket_name, prefix)
-    q = deque(contents)
-    total_file_count = len(contents)
-    batch_num = 1
+def bronze_data_upload(file, bronze_upload_data_folder, bronze_download_folder_path, bucket_name, logger, s3_bronze_prefix):
+    full_path_upload = os.path.join(bronze_upload_data_folder, file)
+    if file.startswith("bronze_"):
+        original_file = file.replace("bronze_", "", 1)
+    full_path_download = os.path.join(bronze_download_folder_path, original_file)
 
-    while q:
-        logger.info(f"Starting batch {batch_num} - Remaining files: {len(q)}")
-        file_dict = batch_loop(batch_size, q)
-        downloaded = total_file_count - len(q)
+    s3_key = f"{s3_bronze_prefix}/{file}"
+    print(s3_key)
+    upload_to_s3(full_path_upload, bucket_name, s3_key, logger)
+    
+    return full_path_upload, full_path_download
 
-        dfs = {
-            key: convert_to_pd_df(value)
-            for key, value in file_dict.items()
-        }
+
+def process_bronze(bronze_upload_data_folder, bronze_download_folder_path, s3_bronze_prefix, logger, bucket_name):
+    for file in os.listdir(bronze_upload_data_folder):
+        full_path_upload, full_path_download = bronze_data_upload(file, bronze_upload_data_folder, bronze_download_folder_path, bucket_name, logger, s3_bronze_prefix)
+        delete_file(full_path_upload, logger)
+        delete_file(full_path_download, logger)
+
+
+
+def is_dir_empty(path):
+    return len(os.listdir(path)) == 0
+
+
+
+def bronze_batch_process(logger, bucket_name, bronze_q, batch_size, bronze_upload_data_folder, bronze_download_folder_path, s3_bronze_prefix, batch_num):
+    if is_dir_empty(bronze_download_folder_path):
+        logger.info(f"Starting batch {batch_num} - Remaining files: {len(bronze_q)}")
+        file_dict = batch_loop(batch_size, bronze_q, bronze_download_folder_path, bucket_name, logger)
+
+        dfs = convert_dict_dfs(file_dict)
 
         for filename, df in dfs.items():
-            full_path = convert_to_csv(df, upload_data_folder, filename, logger)
+            full_path = convert_to_csv(df, bronze_upload_data_folder, filename, logger, "bronze")
 
-        for file in os.listdir(UPLOAD_DATA_FOLDER):
-            full_path_upload = os.path.join(upload_data_folder, file)
-            if file.startswith("bronze_"):
-                original_file = file.replace("bronze_", "", 1)
-            full_path_download = os.path.join(download_folder_path, original_file)
-            s3_key = f"{s3_bronze_prefix}/{file}"
-            upload_to_s3(full_path_upload, bucket_name, s3_key, logger)
-            delete_file(full_path_upload, logger)
-            delete_file(full_path_download, logger)
-            
-        
+        process_bronze(bronze_upload_data_folder, bronze_download_folder_path, s3_bronze_prefix, logger, bucket_name)
 
-
-        logger.info(f"Batched {downloaded}/{total_file_count} files")
-        batch_num += 1
-
-        time.sleep(20)
+    else:
+        raise Exception(f"Directory {os.path.basename(bronze_download_folder_path)} is not empty. Clean it before starting the batch.")
 
 
 
-#### Two options, though one seems much better as of right now. I convert the file to pd and then back to .csv and save
-#### under a different file name that helps us determine that the file has been processed. I should probably delete the
-#### file after doing that as we no longer need that raw data since we have converted it to a 'cleaned' csv. The other 
-#### option is to just delete it at the end. Not exactly sure which one would be better speed wise but I am fairly certain
-#### I know which one would be better memory wise. That is what I am going to do. Also, I will create a new folder with 
-#### dedicated s3 functions so I don't need to have numerous repeats and can just pull the upload and download stuff from 
-#### one central folder.
+def batch_logger(logger, batch_num):
+    logger.info(f"Completed Bronze layer for {batch_num} - Moving onto Silver Layer")
