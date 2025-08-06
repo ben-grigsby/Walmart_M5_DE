@@ -6,41 +6,29 @@ base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.append(base_path)
 
 from extractor.extractor_utils import (
-    get_files_from_s3,
+    create_file_queue,
     batch_loop,
 )
 
-from scripts.bronze.bronze_layer_utils import (
+from scripts.s3_utils import (
+    layer_data_upload,
+)
+
+from local_utils import (
+    delete_file,
+    clean_folder,
+    is_dir_empty,
     convert_dict_dfs,
     convert_to_csv,
-    delete_file,
-    bronze_data_upload,
+)
+
+from logs.logger import (
+    batch_logger
 )
 
 # ===================================================================================
 # Functions
 # ===================================================================================
-
-# def bronze_batch_process(logger, bucket_name, bronze_q, batch_size, bronze_upload_data_folder, bronze_download_folder_path, s3_bronze_prefix, bronze_batch_num):
-#     if is_dir_empty(bronze_download_folder_path):
-#         logger.info(f"Starting batch {bronze_batch_num} - Remaining files: {len(bronze_q)}")
-#         file_dict = batch_loop(batch_size, bronze_q, bronze_download_folder_path, bucket_name, logger)
-
-#         dfs = convert_dict_dfs(file_dict)
-
-#         for filename, df in dfs.items():
-#             full_path = convert_to_csv(df, bronze_upload_data_folder, filename, logger)
-
-#         process_bronze(bronze_upload_data_folder, bronze_download_folder_path, s3_bronze_prefix, logger, bucket_name)
-#         bronze_batch_num += 1
-#     else:
-#         raise Exception(f"Directory {os.path.basename(bronze_download_folder_path)} is not empty. Clean it before starting the batch.")
-
-
-
-def is_dir_empty(path):
-    return len(os.listdir(path)) == 0
-
 
 
 def melt_file(df, id_vars, value_vars, var_name, value_name):
@@ -88,18 +76,27 @@ def identify_df_to_melt(df):
 
 
 
-def process_silver(silver_upload_data_folder, silver_download_folder_path, bucket_name, logger, s3_silver_prefix):
+
+def process_silver(silver_upload_data_folder, silver_download_folder_path, bucket_name, logger, s3_silver_prefix, layer="silver_"):
+    # print(silver_download_folder_path)
     for file in os.listdir(silver_upload_data_folder):
-        full_path_upload, full_path_download = bronze_data_upload(file, silver_upload_data_folder, silver_download_folder_path, bucket_name, logger, s3_silver_prefix)
-        delete_file(full_path_upload, logger)
-        delete_file(full_path_download)
+        full_path_upload = layer_data_upload(file, silver_upload_data_folder, silver_download_folder_path, bucket_name, logger, s3_silver_prefix, layer)
+        # delete_file(full_path_upload, logger)
+
+        # download_dir = os.path.dirname(full_path_download)
+        # # print(download_dir, full_path_download)
+        # download_basename = os.path.basename(full_path_download)
+        # replaced_basename = download_basename.replace("melted", "bronze")
+
+        # full_path_download = os.path.join(download_dir, replaced_basename)
+        # delete_file(full_path_download, logger)
 
 
 
 def silver_batch_process(silver_download_folder_path, logger, batch_num, batch_size, silver_q, bucket_name, silver_upload_data_folder, s3_silver_prefix):
     if is_dir_empty(silver_download_folder_path):
         logger.info(f"Starting batch {batch_num}")
-        file_dict = batch_loop(batch_size, silver_q, silver_download_folder_path, bucket_name, logger)
+        file_dict, q = batch_loop(batch_size, silver_q, silver_download_folder_path, bucket_name, logger)
         
         dfs = convert_dict_dfs(file_dict)
         updated_dict = {}
@@ -109,6 +106,7 @@ def silver_batch_process(silver_download_folder_path, logger, batch_num, batch_s
             trim_name = base.replace("bronze_", "")
             if identify_df_to_melt(df):
                 id_vars, value_vars, var_name, value_name = df_melt_vars(df)
+                logger.info(f"Melting {os.path.basename(filename)}")
                 df_to_save = melt_file(df, id_vars, value_vars, var_name, value_name)
 
                 silver_name = trim_name
@@ -124,8 +122,23 @@ def silver_batch_process(silver_download_folder_path, logger, batch_num, batch_s
             full_path = convert_to_csv(df_to_save, silver_upload_data_folder, output_name, logger, "silver")
 
 
-        process_silver(silver_upload_data_folder, silver_download_folder_path, s3_silver_prefix, logger, bucket_name)
+        process_silver(silver_upload_data_folder, silver_download_folder_path, bucket_name, logger, s3_silver_prefix)
+        clean_folder(silver_download_folder_path, logger)
+        clean_folder(silver_upload_data_folder, logger)
+
+        return q
 
     else:
         raise Exception (f"Directory {os.path.basename(silver_download_folder_path)} is not empty. Clean it before pushing through silver layer.")
         
+
+
+def silver_layer(bucket_name, bronze_prefix, silver_logger, batch_size, silver_upload_data_folder, silver_download_folder_path, s3_silver_prefix):
+    silver_q = create_file_queue(bucket_name, bronze_prefix)
+    batch_num = 1
+
+    while silver_q:
+        silver_q = silver_batch_process(silver_download_folder_path, silver_logger, batch_num, batch_size, silver_q, bucket_name, silver_upload_data_folder, s3_silver_prefix)
+        batch_logger(silver_logger, batch_num)
+
+        batch_num += 1

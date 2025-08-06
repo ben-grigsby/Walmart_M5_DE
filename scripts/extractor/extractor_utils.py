@@ -76,7 +76,7 @@ def batch_loop(batch_size, q, folder_path, bucket_name, logger):
         file_dict[basename] = local_path
     
     # print(file_dict)
-    return file_dict
+    return file_dict, q
 
 
 
