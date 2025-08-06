@@ -1,1 +1,6 @@
-scripts/bronze/downloaded_data
+scripts/bronze/bronze_data_ready_for_upload/
+scripts/bronze/bronze_downloaded_data/
+scripts/silver/silver_data_ready_for_upload
+scripts/silver/silver_downloaded_data
+scripts/gold/gold_data_ready_for_upload
+scripts/gold/gold_downloaded_data
