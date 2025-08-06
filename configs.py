@@ -13,6 +13,9 @@ BRONZE_UPLOAD_DATA_FOLDER = 'scripts/bronze/bronze_data_ready_for_upload'
 BRONZE_DOWNLOAD_FOLDER_PATH = 'scripts/bronze/bronze_downloaded_data'
 S3_BRONZE_PREFIX = 'bronze'
 bronze_logger = get_logger("bronze_logger")
+BRONZE_LAYER_NAME = "Bronze"
+
+
 BRONZE_PREFIX = 'bronze/'
 SILVER_UPLOAD_DATA_FOLDER = 'scripts/silver/silver_data_ready_for_upload'
 SILVER_DOWNLOAD_FOLDER_PATH = 'scripts/silver/silver_downloaded_data'
